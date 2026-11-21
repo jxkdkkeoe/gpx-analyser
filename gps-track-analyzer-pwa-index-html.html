@@ -1,0 +1,751 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>GPS Track Analyzer</title>
+    <meta name="description" content="GPX-tracks analyseren: kaart, snelheid, tempo, splitsen en hoogte." />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Track Analyzer" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <style>
+      :root { font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; color: #0f172a; background: #f1f5f9; }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 0; }
+      main { max-width: 900px; margin: 0 auto; padding: 16px; }
+      h1 { font-size: 22px; margin: 0; }
+      h2 { font-size: 16px; margin: 0 0 8px; }
+      .sub { color: #64748b; font-size: 13px; margin: 4px 0 0; }
+      .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin-top: 14px; box-shadow: 0 1px 2px rgba(15,23,42,.05); }
+      .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 14px; }
+      @media (min-width: 640px) { .stats { grid-template-columns: repeat(3, 1fr); } }
+      @media (min-width: 900px) { .stats { grid-template-columns: repeat(6, 1fr); } }
+      .stat { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px 10px; }
+      .stat .l { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: #64748b; font-weight: 700; }
+      .stat .v { font-size: 17px; font-weight: 700; margin-top: 2px; }
+      .stat .s { font-size: 11px; color: #64748b; margin-top: 1px; }
+      .tabs { display: flex; gap: 8px; margin-top: 16px; overflow-x: auto; padding-bottom: 2px; }
+      .tab { flex: 0 0 auto; border: 1px solid #cbd5e1; background: #fff; color: #334155; border-radius: 999px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+      .tab.active { background: #0f172a; color: #fff; border-color: #0f172a; }
+      button.primary { background: #0f172a; color: #fff; border: none; border-radius: 10px; padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer; }
+      button.primary:disabled { opacity: .4; }
+      button.ghost { background: #fff; color: #334155; border: 1px solid #cbd5e1; border-radius: 10px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+      .drop { border: 2px dashed #cbd5e1; border-radius: 12px; background: #fff; padding: 36px 16px; text-align: center; margin-top: 14px; cursor: pointer; }
+      .err { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; border-radius: 10px; padding: 10px 14px; margin-top: 12px; font-size: 13px; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th { text-align: left; color: #64748b; font-weight: 600; border-bottom: 1px solid #e2e8f0; padding: 6px 6px; }
+      td { padding: 7px 6px; border-bottom: 1px solid #f1f5f9; }
+      .scroll { max-height: 380px; overflow-y: auto; }
+      input[type=range] {
+        width: 100%;
+        height: 30px;
+        touch-action: none;
+        -webkit-appearance: none;
+        appearance: none;
+        background: transparent;
+      }
+      input[type=range]::-webkit-slider-runnable-track {
+        height: 6px;
+        border-radius: 999px;
+        background: #cbd5e1;
+      }
+      input[type=range]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 26px;
+        height: 26px;
+        margin-top: -10px;
+        border-radius: 50%;
+        background: #0f172a;
+        border: 2px solid #fff;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.35);
+      }
+      .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+      .muted { color: #64748b; font-size: 12px; }
+      .chartSVG { width: 100%; height: auto; display: block; touch-action: pan-y; }
+      .legendbar { height: 6px; flex: 1; border-radius: 999px; background: linear-gradient(90deg, hsl(205,80%,50%), hsl(105,80%,50%), hsl(10,80%,50%)); }
+      .flex { display: flex; align-items: center; gap: 8px; }
+      textarea { width: 100%; height: 110px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; font-family: monospace; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div id="errorBar"></div>
+
+      <section id="uploadView">
+        <h1>GPS Track Analyzer</h1>
+        <p class="sub">Snelheid en tempo, kilometersplitsen, hoogteprofiel en een echte kaart. Werkt op de telefoon, volledig offline behalve de kaarttegels.</p>
+        <div class="drop" id="dropZone" onclick="document.getElementById('fileInput').click()">
+          <div style="font-weight:700">Kies een GPX-bestand</div>
+          <div class="sub">Tik om een bestand te selecteren, of sleep het hierheen</div>
+          <div style="margin-top:14px; display:inline-block" class="primary" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">Bestand selecteren</div>
+        </div>
+        <input type="file" id="fileInput" style="display:none" onchange="app.readFile(this)" />
+        <div style="margin-top:12px">
+          <button class="ghost" style="width:100%" onclick="app.loadDemo()">Voorbeeldtrack laden</button>
+        </div>
+        <details style="margin-top:12px">
+          <summary style="cursor:pointer;font-size:13px;color:#334155">Of GPX-tekst plakken</summary>
+          <div class="card">
+            <textarea id="pasteArea" placeholder="Plak hier de volledige GPX-tekst"></textarea>
+            <button class="primary" style="margin-top:8px" onclick="app.loadPaste()">Tekst analyseren</button>
+          </div>
+        </details>
+        <p class="muted" style="margin-top:14px">
+          Tip: zet deze pagina op het beginscherm voor snelle toegang. Android: menu van de browser en dan
+          Toevoegen aan startscherm. Factoren zoals snelheid en tempo worden volledig op het toestel berekend.
+        </p>
+      </section>
+
+      <section id="resultView" hidden>
+        <div class="row">
+          <div>
+            <h1 id="trackTitle"></h1>
+            <p class="sub" id="trackMeta"></p>
+          </div>
+          <button class="ghost" onclick="app.reset()">Nieuwe track</button>
+        </div>
+        <div class="stats" id="statsGrid"></div>
+        <div class="tabs" id="tabBar"></div>
+        <div id="tabOverzicht"></div>
+        <div id="tabSplitsen" hidden></div>
+        <div id="tabRoute" hidden></div>
+        <div id="tabHoogte" hidden></div>
+        <p class="muted" style="text-align:center;margin-top:18px">
+          Afstanden via haversine; stilstand onder 2 km/h buiten het bewegende gemiddelde; hoogte gefilterd op 1 m ruis. Kaart encopy; OpenStreetMap.
+        </p>
+      </section>
+    </main>
+
+    <script>
+      const MOVING_THRESHOLD_MS = 0.55;
+      const ELE_GATE_M = 1;
+
+      function haversineMeters(a, b) {
+        const toRad = (x) => (x * Math.PI) / 180;
+        const dLat = toRad(b.lat - a.lat);
+        const dLon = toRad(b.lon - a.lon);
+        const la1 = toRad(a.lat), la2 = toRad(b.lat);
+        const s = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+        return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(s)));
+      }
+
+      function localName(n) { return (n.localName || n.nodeName.replace(/^.*:/, "")).toLowerCase(); }
+
+      function parseGPX(text) {
+        const doc = new DOMParser().parseFromString(text, "application/xml");
+        if (doc.getElementsByTagName("parsererror").length) throw new Error("Ongeldig GPX-bestand: de XML kon niet worden gelezen.");
+        const all = Array.from(doc.getElementsByTagName("*"));
+        const nodes = all.filter((n) => localName(n) === "trkpt");
+        if (!nodes.length) throw new Error("Geen trackpunten (trkpt) gevonden in het GPX-bestand.");
+        const nameEl = all.find((n) => localName(n) === "name" && n.textContent && n.textContent.trim());
+        const pts = [];
+        for (const n of nodes) {
+          const lat = parseFloat(n.getAttribute("lat"));
+          const lon = parseFloat(n.getAttribute("lon"));
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+          let ele = null, time = null;
+          for (const c of Array.from(n.children || [])) {
+            const tag = localName(c);
+            if (tag === "ele") { const e = parseFloat((c.textContent || "").replace(",", ".")); if (Number.isFinite(e)) ele = e; }
+            else if (tag === "time") { const t = Date.parse((c.textContent || "").trim()); if (!Number.isNaN(t)) time = t; }
+          }
+          pts.push({ lat, lon, ele, time });
+        }
+        return { pts, name: nameEl ? nameEl.textContent.trim() : "" };
+      }
+
+      function analyzeTrack(pts) {
+        const valid = pts.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+        if (valid.length < 2) throw new Error("De track bevat te weinig geldige punten.");
+        const n = valid.length;
+        const hasEle = valid.some((p) => p.ele != null);
+        const hasTime = valid.filter((p) => p.time != null).length >= 2;
+        const d = new Array(n).fill(0), dt = new Array(n).fill(null), cum = new Array(n).fill(0);
+        for (let i = 1; i < n; i++) {
+          d[i] = haversineMeters(valid[i - 1], valid[i]);
+          cum[i] = cum[i - 1] + d[i];
+          if (hasTime && valid[i - 1].time != null && valid[i].time != null) dt[i] = Math.max(0, (valid[i].time - valid[i - 1].time) / 1000);
+        }
+        const totalM = cum[n - 1];
+        if (!Number.isFinite(totalM) || totalM < 5) throw new Error("De track bevat te weinig beweging om te analyseren.");
+        const firstTime = hasTime ? valid.find((p) => p.time != null).time : null;
+        const lastTime = hasTime ? valid.slice().reverse().find((p) => p.time != null).time : null;
+        const elapsedS = hasTime ? Math.max(0, (lastTime - firstTime) / 1000) : null;
+        const vRaw = new Array(n).fill(null);
+        let movingS = 0, movingDist = 0;
+        if (hasTime) {
+          for (let i = 1; i < n; i++) {
+            if (dt[i] != null && dt[i] > 0) {
+              const v = d[i] / dt[i];
+              vRaw[i] = v;
+              if (v >= MOVING_THRESHOLD_MS) { movingS += dt[i]; movingDist += d[i]; }
+            }
+          }
+        }
+        const dts = dt.filter((x) => x != null && x > 0).sort((a, b) => a - b);
+        const medianDt = dts.length ? dts[Math.floor(dts.length / 2)] : null;
+        const w = hasTime && medianDt ? Math.max(3, Math.min(15, Math.round(16 / Math.max(medianDt, 0.5)))) : 5;
+        const half = Math.floor(w / 2);
+        const smoothV = new Array(n).fill(null);
+        for (let i = 1; i < n; i++) {
+          let sum = 0, cnt = 0;
+          for (let j = Math.max(1, i - half); j <= Math.min(n - 1, i + half); j++) {
+            if (vRaw[j] != null) { sum += vRaw[j]; cnt++; }
+          }
+          if (cnt > 0) smoothV[i] = sum / cnt;
+        }
+        const movV = movingS > 0 ? movingDist / movingS : null;
+        const maxV = smoothV.reduce((m, x) => (x != null && x > m ? x : m), 0);
+        let gainM = null, lossM = null;
+        const eleS = new Array(n).fill(null);
+        if (hasEle) {
+          for (let i = 0; i < n; i++) {
+            let sum = 0, cnt = 0;
+            for (let j = Math.max(0, i - half); j <= Math.min(n - 1, i + half); j++) {
+              if (valid[j].ele != null) { sum += valid[j].ele; cnt++; }
+            }
+            eleS[i] = cnt > 0 ? sum / cnt : null;
+          }
+          gainM = 0; lossM = 0;
+          let ref = valid.find((p) => p.ele != null).ele;
+          for (let i = 0; i < n; i++) {
+            const e = eleS[i];
+            if (e == null) continue;
+            if (e > ref + ELE_GATE_M) { gainM += e - ref; ref = e; }
+            else if (e < ref - ELE_GATE_M) { lossM += ref - e; ref = e; }
+          }
+        }
+        let splits = null;
+        if (hasTime && movingS > 0) {
+          splits = [];
+          let nextKm = 1000, prevBTime = firstTime, prevBEle = null, lastBCum = 0;
+          for (let i = 1; i < n; i++) {
+            while (nextKm <= cum[n - 1] && nextKm <= cum[i]) {
+              const denom = Math.max(d[i], 1e-6);
+              const frac = (nextKm - cum[i - 1]) / denom;
+              const t0 = valid[i - 1].time, t1 = valid[i].time;
+              let bTime;
+              if (t0 != null && t1 != null) bTime = t0 + frac * (t1 - t0);
+              else if (t1 != null) bTime = t1;
+              else bTime = prevBTime;
+              let bEle = null;
+              if (hasEle && valid[i - 1].ele != null && valid[i].ele != null) bEle = valid[i - 1].ele + frac * (valid[i].ele - valid[i - 1].ele);
+              splits.push({ km: splits.length + 1, partial: false, splitS: Math.max(0, (bTime - prevBTime) / 1000), cumS: (bTime - firstTime) / 1000, eleDelta: bEle != null && prevBEle != null ? bEle - prevBEle : null });
+              prevBTime = bTime;
+              if (bEle != null) prevBEle = bEle;
+              lastBCum = nextKm;
+              nextKm += 1000;
+            }
+          }
+          const restM = totalM - lastBCum;
+          if (restM > 100) splits.push({ km: lastBCum / 1000 + restM / 1000, partial: true, splitS: Math.max(0, (lastTime - prevBTime) / 1000), cumS: elapsedS, eleDelta: null });
+        }
+        const strideRows = Math.max(1, Math.ceil(n / 320));
+        const rows = [];
+        for (let i = 0; i < n; i += strideRows) {
+          rows.push({ d: +(cum[i] / 1000).toFixed(2), v: smoothV[i] != null ? +(smoothV[i] * 3.6).toFixed(1) : null, ele: valid[i].ele != null ? +(+valid[i].ele).toFixed(1) : null });
+        }
+        const strideMap = Math.max(1, Math.ceil(n / 240));
+        const mapPts = [];
+        for (let i = 0; i < n; i += strideMap) {
+          mapPts.push({ lat: valid[i].lat, lon: valid[i].lon, d: +(cum[i] / 1000).toFixed(2), v: smoothV[i] != null ? +(smoothV[i] * 3.6).toFixed(1) : null, ele: valid[i].ele != null ? +(+valid[i].ele).toFixed(1) : null, t: hasTime && valid[i].time != null ? +((valid[i].time - firstTime) / 1000).toFixed(0) : null, ts: hasTime ? valid[i].time : null });
+        }
+        const full = splits ? splits.filter((s) => !s.partial) : [];
+        const sorted = full.slice().sort((a, b) => a.splitS - b.splitS);
+        return {
+          n, hasTime, hasEle, totalM, elapsedS, movingS,
+          avgV: elapsedS > 0 ? totalM / elapsedS : null,
+          movV, maxV: hasTime ? maxV : null, gainM, lossM, startTime: firstTime,
+          splits, fastest: sorted[0] || null, slowest: sorted.length ? sorted[sorted.length - 1] : null,
+          rows, mapPts,
+        };
+      }
+
+      function cumulativeMeters(pts) {
+        const c = [0];
+        for (let i = 1; i < pts.length; i++) c[i] = c[i - 1] + haversineMeters(pts[i - 1], pts[i]);
+        return c;
+      }
+
+      /* Automatische randopruiming: gps-sprongen aan begin en einde plus (0,0)-punten. */
+      function cleanEdges(rawPts) {
+        const pts = rawPts.filter(
+          (p) => Number.isFinite(p.lat) && Number.isFinite(p.lon) && !(Math.abs(p.lat) < 0.01 && Math.abs(p.lon) < 0.01)
+        );
+        const n = pts.length;
+        const isGlitch = (d, dt) =>
+          d > 2000 || (dt != null && dt > 0 && d / dt > 100) || (dt != null && dt <= 0 && d > 2);
+        const segD = (a, b) => haversineMeters(a, b);
+        const segDt = (a, b) => (a.time != null && b.time != null ? Math.max(0, (b.time - a.time) / 1000) : null);
+        let s = 0;
+        while (s < n - 2 && isGlitch(segD(pts[s], pts[s + 1]), segDt(pts[s], pts[s + 1]))) s++;
+        let e = n - 1;
+        while (e > s + 1 && isGlitch(segD(pts[e - 1], pts[e]), segDt(pts[e - 1], pts[e]))) e--;
+        let cutStartM = 0;
+        for (let i = 1; i <= s; i++) cutStartM += segD(pts[i - 1], pts[i]);
+        let cutEndM = 0;
+        for (let i = e + 1; i < n; i++) cutEndM += segD(pts[i - 1], pts[i]);
+        return { pts: pts.slice(s, e + 1), cutStartM, cutEndM };
+      }
+
+      function demoPts() {
+        const base = { lat: 52.3702, lon: 4.8952 };
+        const N = 540, arr = [];
+        for (let i = 0; i <= N; i++) {
+          const a = (i / N) * Math.PI * 2;
+          const r = 1 + 0.1 * Math.sin(3 * a) + 0.04 * Math.sin(7 * a + 1);
+          arr.push({ lat: base.lat + 0.01 * r * Math.sin(a), lon: base.lon + 0.0155 * r * Math.cos(a), ele: 3 + 20 * (0.5 - 0.5 * Math.cos(2 * a + 0.4)), time: null });
+        }
+        let t = Date.UTC(2026, 4, 16, 9, 12, 0);
+        arr[0].time = t;
+        for (let i = 1; i < arr.length; i++) {
+          const a = ((i - 1) / N) * Math.PI * 2;
+          const speed = 3.15 - 0.7 * Math.sin(2 * a + 0.4) + 0.15 * Math.sin(i * 5.3);
+          t += (haversineMeters(arr[i - 1], arr[i]) / Math.max(speed, 1)) * 1000;
+          arr[i].time = Math.round(t);
+        }
+        return arr;
+      }
+
+      function fmtDist(m) { return (m / 1000 >= 100 ? (m / 1000).toFixed(1) : (m / 1000).toFixed(2)); }
+      function fmtDur(s) {
+        if (s == null) return "-";
+        const t = Math.round(s), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+        return h > 0 ? h + ":" + String(m).padStart(2, "0") + ":" + String(sec).padStart(2, "0") : m + ":" + String(sec).padStart(2, "0");
+      }
+      function fmtPace(kmh) {
+        if (kmh == null || kmh <= 0) return "-";
+        let s = 3600 / kmh;
+        const m = Math.floor(s / 60);
+        let r = Math.round(s % 60);
+        return (r === 60 ? m + 1 : m) + ":" + String(r === 60 ? 0 : r).padStart(2, "0") + " min/km";
+      }
+      function fmtClock(ts) { try { return new Date(ts).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }); } catch (e) { return "-"; } }
+      function fmtStart(ts) { try { return new Date(ts).toLocaleString("nl-NL", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); } catch (e) { return "-"; } }
+      function speedColor(kmh, maxKmh) {
+        if (kmh == null || !maxKmh || maxKmh <= 0) return "#0284c7";
+        const t = Math.min(1, Math.max(0, kmh / maxKmh));
+        return "hsl(" + Math.round(205 - 195 * t) + ", 80%, 50%)";
+      }
+
+      const app = {
+        track: null, name: "", origPts: null, rawPts: null,
+        trim0: 0, trim1: 0, scrub: 0, tab: "overzicht", tilesFailed: false,
+        mapZoom: 0, mapPan: { x: 0, y: 0 },
+
+        showError(msg) { document.getElementById("errorBar").innerHTML = msg ? '<div class="err">' + msg + "</div>" : ""; },
+
+        readFile(input) {
+          const f = input.files && input.files[0];
+          if (!f) return;
+          f.text().then((text) => {
+            try {
+              const { pts, name } = parseGPX(text);
+              this.load(pts, name || f.name.replace(/\.gpx$/i, ""));
+            } catch (e) { this.showError(e.message || "Het bestand kon niet worden gelezen."); }
+            input.value = "";
+          }).catch(() => this.showError("Het bestand kon niet worden gelezen."));
+        },
+
+        loadDemo() { this.load(demoPts(), "Voorbeeldtrack Amsterdam"); },
+
+        loadPaste() {
+          try {
+            const { pts, name } = parseGPX(document.getElementById("pasteArea").value);
+            this.load(pts, name || "Geplakte track");
+          } catch (e) { this.showError(e.message || "De GPX-tekst kon niet worden gelezen."); }
+        },
+
+        load(ptsRaw, name) {
+          try {
+            const cleaned = cleanEdges(ptsRaw);
+            this.track = analyzeTrack(cleaned.pts);
+            this.track.cutStartM = cleaned.cutStartM;
+            this.track.cutEndM = cleaned.cutEndM;
+            this.origPts = cleaned.pts;
+            this.rawPts = cleaned.pts;
+            this.name = name || "Track";
+            this.tab = "overzicht";
+            this.scrub = 0;
+            this.trim0 = 0;
+            this.trim1 = this.track.totalM;
+            this.tilesFailed = false;
+            this.mapZoom = 0;
+            this.mapPan = { x: 0, y: 0 };
+            this.showError("");
+            this.render();
+          } catch (e) { this.showError(e.message || "De track kon niet worden verwerkt."); }
+        },
+
+        reset() { this.track = null; this.showError(""); this.render(); },
+
+        applyTrim() {
+          if (!this.rawPts || !this.track) return;
+          if (this.trim0 <= 0 && this.trim1 >= this.track.totalM) return;
+          const cum = cumulativeMeters(this.rawPts);
+          const keep = this.rawPts.filter((p, i) => cum[i] >= this.trim0 - 1e-6 && cum[i] <= this.trim1 + 1e-6);
+          if (keep.length < 2) { this.showError("Het resterende gedeelte is te kort. Vergroot het bereik."); return; }
+          try {
+            this.track = analyzeTrack(keep);
+            this.rawPts = keep;
+            this.scrub = 0;
+            this.trim0 = 0;
+            this.trim1 = this.track.totalM;
+            this.tilesFailed = false;
+            this.showError("");
+            this.render();
+          } catch (e) { this.showError(e.message || "Het bijsnijden kon niet worden toegepast."); }
+        },
+
+        restoreOriginal() { if (this.origPts) this.load(this.origPts, this.name); },
+
+        setTab(t) { this.tab = t; this.render(); },
+        setScrub(v) { this.scrub = Number(v); this.renderRouteTab(); },
+        setTrim0(v) { this.trim0 = Math.min(Number(v), Math.max(0, this.trim1 - 50)); this.renderRouteTab(); },
+        setTrim1(v) { this.trim1 = Math.max(Number(v), Math.min(this.track.totalM, this.trim0 + 50)); this.renderRouteTab(); },
+        tileError() { if (!this.tilesFailed) { this.tilesFailed = true; this.renderRouteTab(); } },
+        mapZoomIn() { this.mapZoom = Math.min(2, this.mapZoom + 1); this.renderRouteTab(); },
+        mapZoomOut() { this.mapZoom = Math.max(-3, this.mapZoom - 1); this.renderRouteTab(); },
+        mapReset() { this.mapZoom = 0; this.mapPan = { x: 0, y: 0 }; this.renderRouteTab(); },
+
+        render() {
+          const up = document.getElementById("uploadView");
+          const res = document.getElementById("resultView");
+          if (!this.track) { up.hidden = false; res.hidden = true; return; }
+          up.hidden = true;
+          res.hidden = false;
+          document.getElementById("trackTitle").textContent = this.name;
+          document.getElementById("trackMeta").textContent =
+            (this.track.startTime ? fmtStart(this.track.startTime) + " · " : "") +
+            this.track.n.toLocaleString("nl-NL") + " punten" +
+            (this.track.cutStartM > 1 || this.track.cutEndM > 1
+              ? " · randfilter: begin −" + Math.round(this.track.cutStartM) + " m, einde −" + Math.round(this.track.cutEndM) + " m"
+              : "");
+          this.renderStats();
+          this.renderTabs();
+          this.renderOverzicht();
+          this.renderSplitsen();
+          this.renderRouteTab();
+          this.renderHoogte();
+        },
+
+        renderStats() {
+          const t = this.track;
+          const avgKmh = t.movV != null ? t.movV * 3.6 : null;
+          const maxKmh = t.maxV != null ? t.maxV * 3.6 : null;
+          const stat = (l, v, s) => '<div class="stat"><div class="l">' + l + '</div><div class="v">' + v + '</div>' + (s ? '<div class="s">' + s + "</div>" : "") + "</div>";
+          document.getElementById("statsGrid").innerHTML =
+            stat("Afstand", fmtDist(t.totalM) + " km", Math.round(t.totalM) + " m") +
+            stat("Tijd totaal", fmtDur(t.elapsedS), t.movingS ? "bewegend: " + fmtDur(t.movingS) : "") +
+            stat("Gem. snelheid", avgKmh != null ? avgKmh.toFixed(1) + " km/h" : "-", fmtPace(avgKmh)) +
+            stat("Max. snelheid", maxKmh != null ? maxKmh.toFixed(1) + " km/h" : "-", "gladde piek (16 s)") +
+            stat("Tempo", fmtPace(avgKmh).replace(" min/km", ""), "gemiddeld, bewegend") +
+            stat("Hoogte", t.gainM != null ? "+" + Math.round(t.gainM) + " m" : "-", t.lossM != null ? "-" + Math.round(t.lossM) + " m afdaling" : "geen hoogtedata");
+        },
+
+        renderTabs() {
+          const tabs = [{ id: "overzicht", label: "Overzicht" }];
+          if (this.track.hasTime && this.track.movingS > 0) tabs.push({ id: "splitsen", label: "Splitsen" });
+          tabs.push({ id: "route", label: "Route" });
+          if (this.track.hasEle) tabs.push({ id: "hoogte", label: "Hoogte" });
+          document.getElementById("tabBar").innerHTML = tabs.map((tb) =>
+            '<button class="tab' + (this.tab === tb.id ? " active" : "") + '" onclick="app.setTab(\'' + tb.id + '\')">' + tb.label + "</button>"
+          ).join("");
+          document.getElementById("tabOverzicht").hidden = this.tab !== "overzicht";
+          document.getElementById("tabSplitsen").hidden = this.tab !== "splitsen";
+          document.getElementById("tabRoute").hidden = this.tab !== "route";
+          document.getElementById("tabHoogte").hidden = this.tab !== "hoogte";
+        },
+
+        chartSVG(rows, key, color, fill, unit, decimals) {
+          const vs = rows.map((r) => r[key]).filter((v) => v != null);
+          if (!vs.length) return '<div class="muted">Geen gegevens voor deze grafiek.</div>';
+          const W = 800, H = 300, L = 52, Rp = 14, T = 14, B = 30;
+          const iw = W - L - Rp, ih = H - T - B;
+          const dMin = rows[0].d, dMax = rows[rows.length - 1].d || 1;
+          let vMax = Math.max(...vs), vMin = Math.min(...vs);
+          const padV = (vMax - vMin) * 0.08 || Math.max(1, vMax * 0.05);
+          vMax += padV;
+          vMin = Math.max(0, vMin - padV);
+          if (vMin >= vMax) vMin = 0;
+          const X = (d) => L + ((d - dMin) / (dMax - dMin || 1)) * iw;
+          const Y = (v) => T + (1 - (v - vMin) / (vMax - vMin || 1)) * ih;
+          let out = "";
+          for (let g = 0; g <= 4; g++) {
+            const vv = vMin + ((vMax - vMin) * g) / 4;
+            out += '<line x1="' + L + '" y1="' + Y(vv) + '" x2="' + (W - Rp) + '" y2="' + Y(vv) + '" stroke="#e2e8f0" stroke-dasharray="3 3"/>';
+            out += '<text x="' + (L - 6) + '" y="' + (Y(vv) + 4) + '" font-size="11" fill="#64748b" text-anchor="end">' + vv.toFixed(decimals) + " " + unit + "</text>";
+          }
+          for (let g = 0; g <= 6; g++) {
+            const dd = dMin + ((dMax - dMin) * g) / 6;
+            out += '<text x="' + X(dd) + '" y="' + (H - 8) + '" font-size="11" fill="#64748b" text-anchor="middle">' + dd.toFixed(1) + "</text>";
+          }
+          let seg = [], area = [];
+          const flush = () => {
+            if (seg.length > 1) {
+              out += '<polyline points="' + seg.join(" ") + '" fill="none" stroke="' + color + '" stroke-width="2.5" stroke-linejoin="round"/>';
+              if (fill) {
+                const base = Y(vMin);
+                out += '<polygon points="' + L + "," + base + " " + seg.join(" ") + " " + (seg[seg.length - 1].split(",")[0]) + "," + base + '" fill="' + fill + '" stroke="none"/>' ;
+                out += '<polyline points="' + seg.join(" ") + '" fill="none" stroke="' + color + '" stroke-width="2.5" stroke-linejoin="round"/>';
+              }
+            }
+            seg = [];
+          };
+          for (const r of rows) {
+            if (r[key] == null) { flush(); continue; }
+            seg.push(X(r.d).toFixed(1) + "," + Y(r[key]).toFixed(1));
+          }
+          flush();
+          return '<svg class="chartSVG" viewBox="0 0 ' + W + " " + H + '" ontouchstart="" id="chart_' + key + '">' + out + "</svg>";
+        },
+
+        bindChart(svgId, readoutId, rows, key, unit, extraPace) {
+          const svg = document.getElementById(svgId);
+          const ro = document.getElementById(readoutId);
+          if (!svg || !ro) return;
+          const W = 800, L = 52, Rp = 14;
+          const dMin = rows[0].d, dMax = rows[rows.length - 1].d || 1;
+          const pick = (clientX) => {
+            const rect = svg.getBoundingClientRect();
+            const px = ((clientX - rect.left) / rect.width) * W;
+            if (px < L || px > W - Rp) { ro.textContent = ""; return; }
+            const target = dMin + ((px - L) / (W - L - Rp)) * (dMax - dMin);
+            let best = rows[0];
+            for (const r of rows) if (Math.abs(r.d - target) < Math.abs(best.d - target)) best = r;
+            const v = best[key];
+            let txt = "op " + best.d.toFixed(2) + " km: " + (v == null ? "-" : v + " " + unit);
+            if (extraPace && v != null && v > 0) txt += " (" + fmtPace(v).replace(" min/km", "/km") + ")";
+            ro.textContent = txt;
+          };
+          svg.addEventListener("pointermove", (e) => pick(e.clientX));
+          svg.addEventListener("pointerleave", () => (ro.textContent = ""));
+        },
+
+        renderOverzicht() {
+          const el = document.getElementById("tabOverzicht");
+          if (!this.track.hasTime || this.track.movingS <= 0) {
+            el.innerHTML = '<div class="card"><h2>Snelheid</h2><p class="muted">Dit GPX-bestand bevat geen tijdsgegevens bij de trackpunten. Snelheid, tempo en splitsen kunnen daarom niet worden berekend. Afstand, route en hoogte zijn wel beschikbaar.</p></div>';
+            return;
+          }
+          el.innerHTML = '<div class="card"><h2>Snelheid over de route (km/h en tempo)</h2>' +
+            this.chartSVG(this.track.rows, "v", "#0284c7", null, "km/h", 0) +
+            '<p class="muted" id="speedReadout"></p><p class="muted">stilstand (minder dan 2 km/h) is buiten het bewegende gemiddelde gehouden</p></div>';
+          this.bindChart("chart_v", "speedReadout", this.track.rows, "v", "km/h", true);
+        },
+
+        renderHoogte() {
+          const el = document.getElementById("tabHoogte");
+          if (!this.track.hasEle) { el.innerHTML = ""; return; }
+          const t = this.track;
+          el.innerHTML = '<div class="card"><h2>Hoogteprofiel</h2>' +
+            this.chartSVG(t.rows, "ele", "#059669", "#d1fae5", "m", 0) +
+            '<p class="muted" id="eleReadout"></p></div>' +
+            '<div class="card"><div class="stats" style="margin-top:0">' +
+            '<div class="stat"><div class="l">Stijging</div><div class="v">+' + Math.round(t.gainM) + ' m</div></div>' +
+            '<div class="stat"><div class="l">Afdaling</div><div class="v">-' + Math.round(t.lossM) + ' m</div></div></div></div>';
+          this.bindChart("chart_ele", "eleReadout", t.rows, "ele", "m", false);
+        },
+
+        renderSplitsen() {
+          const el = document.getElementById("tabSplitsen");
+          const t = this.track;
+          if (!t.splits) { el.innerHTML = ""; return; }
+          const paceOf = (s) => (s > 0 ? fmtPace(3600 / s) : "-");
+          let rowsHtml = "";
+          const maxSplit = Math.max(1, ...t.splits.filter((x) => !x.partial).map((x) => x.splitS));
+          for (const s of t.splits) {
+            const kmh = s.splitS > 0 ? 3600 / s.splitS : null;
+            const frac = Math.min(1, s.splitS / maxSplit);
+            rowsHtml += "<tr><td><b>" + (s.partial ? s.km.toFixed(2) + " (deel)" : s.km) + "</b></td>" +
+              "<td>" + fmtDur(s.splitS) + "</td><td>" + fmtDur(s.cumS) + "</td>" +
+              "<td>" + (kmh != null ? fmtPace(kmh).replace(" min/km", "") : "-") + "</td>" +
+              "<td>" + (kmh != null ? kmh.toFixed(1) : "-") + " <span style='display:inline-block;height:5px;width:" + Math.max(8, Math.round(frac * 56)) + "px;background:#94a3b8;border-radius:99px;vertical-align:middle'></span></td>" +
+              "<td>" + (s.eleDelta != null ? (s.eleDelta >= 0 ? "+" : "") + Math.round(s.eleDelta) + " m" : "-") + "</td></tr>";
+          }
+          el.innerHTML = '<div class="card"><h2>Kilometersplitsen</h2>' +
+            (t.fastest ? '<p class="muted">snelste: km ' + t.fastest.km + " (" + paceOf(t.fastest.splitS) + ') · traagste: km ' + t.slowest.km + " (" + paceOf(t.slowest.splitS) + ")</p>" : "") +
+            '<div class="scroll"><table><tr><th>Km</th><th>Split</th><th>Totaal</th><th>Tempo</th><th>Snelheid</th><th>Hoogte</th></tr>' + rowsHtml + "</table></div></div>";
+        },
+
+        mapSVG() {
+          const t = this.track;
+          const pts = t.mapPts;
+          const maxKmh = t.maxV != null ? +(t.maxV * 3.6).toFixed(1) : null;
+          const W = 760, H = 440, pad = 26;
+          const lats = pts.map((p) => p.lat), lons = pts.map((p) => p.lon);
+          const sorted = (arr, lo, hi) => {
+            const s = arr.slice().sort((a, b) => a - b);
+            const n = s.length;
+            return [s[Math.min(n - 1, Math.max(0, Math.floor(n * lo)))], s[Math.min(n - 1, Math.max(0, Math.ceil(n * hi) - 1))]];
+          };
+          const [minLat, maxLat] = sorted(lats, 0.01, 0.99);
+          const [minLon, maxLon] = sorted(lons, 0.01, 0.99);
+          const lonToWorldX = (lon, z) => ((lon + 180) / 360) * Math.pow(2, z);
+          const latToWorldY = (lat, z) => {
+            const s = Math.sin((lat * Math.PI) / 180);
+            const c = Math.min(Math.max(s, -0.9999), 0.9999);
+            return (0.5 - Math.log((1 + c) / (1 - c)) / (4 * Math.PI)) * Math.pow(2, z);
+          };
+          let zFit = 17;
+          for (; zFit > 2; zFit--) {
+            const xa = (lonToWorldX(minLon, zFit)) * 256, xb = (lonToWorldX(maxLon, zFit)) * 256;
+            const ya = (latToWorldY(maxLat, zFit)) * 256, yb = (latToWorldY(minLat, zFit)) * 256;
+            if (xb - xa <= W - 2 * pad && yb - ya <= H - 2 * pad) break;
+          }
+          const z = Math.max(3, Math.min(18, zFit + this.mapZoom));
+          const cx = ((lonToWorldX(minLon, z) + lonToWorldX(maxLon, z)) / 2) * 256;
+          const cy = ((latToWorldY(minLat, z) + latToWorldY(maxLat, z)) / 2) * 256;
+          const ox = W / 2 - cx;
+          const oy = H / 2 - cy;
+          const panX = this.mapPan.x, panY = this.mapPan.y;
+          const pos = pts.map((p) => ({
+            x: lonToWorldX(p.lon, z) * 256 + ox + panX,
+            y: latToWorldY(p.lat, z) * 256 + oy + panY,
+          }));
+          let out = "";
+          if (!this.tilesFailed) {
+            const n = Math.pow(2, z);
+            const tx0 = Math.floor((-ox - panX) / 256), tx1 = Math.floor((W - 1 - ox - panX) / 256);
+            const ty0 = Math.floor((-oy - panY) / 256), ty1 = Math.floor((H - 1 - oy - panY) / 256);
+            for (let ty = ty0; ty <= ty1; ty++) {
+              for (let tx = tx0; tx <= tx1; tx++) {
+                if (ty < 0 || ty >= n || tx < 0 || tx >= n) continue;
+                out += '<image href="https://tile.openstreetmap.org/' + z + "/" + tx + "/" + ty + '.png" x="' + (tx * 256 + ox + panX).toFixed(0) + '" y="' + (ty * 256 + oy + panY).toFixed(0) + '" width="256" height="256" onerror="app.tileError()"/>';
+              }
+            }
+          } else {
+            out += '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#e2e8f0"/>';
+          }
+          for (let i = 1; i < pos.length; i++) {
+            const a = pos[i - 1], g = pos[i];
+            if (a.x < -4 || a.x > W + 4 || a.y < -4 || a.y > H + 4 || g.x < -4 || g.x > W + 4 || g.y < -4 || g.y > H + 4) continue;
+            out += '<line x1="' + a.x.toFixed(1) + '" y1="' + a.y.toFixed(1) + '" x2="' + g.x.toFixed(1) + '" y2="' + g.y.toFixed(1) + '" stroke="' + speedColor(pts[i].v, maxKmh) + '" stroke-width="3" stroke-linecap="round"/>';
+          }
+          const st = pos[0], en = pos[pos.length - 1], cur = pos[Math.min(this.scrub, pos.length - 1)];
+          out += '<circle cx="' + st.x.toFixed(1) + '" cy="' + st.y.toFixed(1) + '" r="5" fill="#16a34a" stroke="#fff" stroke-width="2"/>';
+          out += '<circle cx="' + en.x.toFixed(1) + '" cy="' + en.y.toFixed(1) + '" r="5" fill="#b91c1c" stroke="#fff" stroke-width="2"/>';
+          out += '<circle cx="' + cur.x.toFixed(1) + '" cy="' + cur.y.toFixed(1) + '" r="7" fill="#fff" stroke="#0f172a" stroke-width="2.5"/>';
+          out += '<text x="' + (W - 8) + '" y="' + (H - 8) + '" text-anchor="end" font-size="11" fill="#334155">© OpenStreetMap</text>';
+          return '<svg id="mapSvg" class="chartSVG" style="touch-action:' + (this.mapZoom > 0 ? "none" : "pan-y") + '" viewBox="0 0 ' + W + " " + H + '"><g id="mapG">' + out + "</g></svg>";
+        },
+
+        renderRouteTab() {
+          const el = document.getElementById("tabRoute");
+          const t = this.track;
+          if (!t) return;
+          const cur = t.mapPts[Math.min(this.scrub, t.mapPts.length - 1)];
+          const step = Math.max(5, Math.round(t.totalM / 400 / 5) * 5);
+          el.innerHTML = '<div class="card"><h2>Route op de kaart (kleur = snelheid)</h2>' +
+            '<div style="position:relative">' +
+            this.mapSVG() +
+            '<div style="position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:6px">' +
+            '<button class="ghost" style="width:42px;height:42px;padding:0;font-size:20px" onclick="app.mapZoomIn()">+</button>' +
+            '<button class="ghost" style="width:42px;height:42px;padding:0;font-size:20px" onclick="app.mapZoomOut()">&#8722;</button>' +
+            '<button class="ghost" style="width:42px;height:42px;padding:0;font-size:11px" onclick="app.mapReset()">fit</button>' +
+            "</div></div>" +
+            (t.maxV ? '<div class="flex" style="margin-top:8px"><span class="muted">langzaam</span><span class="legendbar"></span><span class="muted">snel</span></div>' : "") +
+            '<input type="range" min="0" max="' + (t.mapPts.length - 1) + '" value="' + Math.min(this.scrub, t.mapPts.length - 1) + '" oninput="app.setScrub(this.value)"/>' +
+            '<div class="stats" style="margin-top:10px">' +
+            '<div class="stat"><div class="l">Punt</div><div class="v">' + (this.scrub + 1) + '</div><div class="s">van ' + t.mapPts.length + "</div></div>" +
+            '<div class="stat"><div class="l">Afstand</div><div class="v">' + cur.d + ' km</div></div>' +
+            '<div class="stat"><div class="l">Tijd</div><div class="v">' + fmtDur(cur.t) + "</div><div class=\"s\">" + (cur.ts != null ? fmtClock(cur.ts) : "") + "</div></div>" +
+            '<div class="stat"><div class="l">Snelheid</div><div class="v">' + (cur.v != null ? cur.v + " km/h" : "-") + '</div><div class="s">' + fmtPace(cur.v) + "</div></div>" +
+            '<div class="stat"><div class="l">Hoogte</div><div class="v">' + (cur.ele != null ? cur.ele + " m" : "-") + "</div></div>" +
+            "</div></div>" +
+            '<div class="card"><h2>Begin en eind bijsnijden</h2>' +
+            '<div class="row"><span class="muted"><b>Start knippen:</b> 0 tot ' + (this.trim0 / 1000).toFixed(2) + ' km wordt verwijderd · over: ' + (this.trim0 / 1000).toFixed(2) + " tot " + (this.trim1 / 1000).toFixed(2) + ' km</span></div>' +
+            '<input type="range" style="margin-top:8px" min="0" max="' + Math.round(t.totalM) + '" step="' + step + '" value="' + this.trim0 + '" oninput="app.setTrim0(this.value)"/>' +
+            '<div class="row" style="margin-top:8px"><span class="muted"><b>Einde knippen:</b> track loopt tot ' + (this.trim1 / 1000).toFixed(2) + ' km</span></div>' +
+            '<input type="range" style="margin-top:8px" min="0" max="' + Math.round(t.totalM) + '" step="' + step + '" value="' + this.trim1 + '" oninput="app.setTrim1(this.value)"/>' +
+            '<div class="row" style="margin-top:12px"><span class="muted">Alle statistieken worden na het knippen opnieuw berekend.</span>' +
+            '<button class="primary" ' + (this.trim0 <= 0 && this.trim1 >= t.totalM ? "disabled" : "") + ' onclick="app.applyTrim()">Bijsnijden toepassen</button></div>' +
+            (this.origPts && this.rawPts !== this.origPts ? '<div style="margin-top:10px"><button class="ghost" onclick="app.restoreOriginal()">Volledige track herstellen</button></div>' : "") +
+            "</div>";
+        },
+      };
+      window.app = app;
+
+      /* Kaartinteractie: knoppen, knijpen (pinch), slepen en scrollen, via event-delegatie. */
+      const routeTab = document.getElementById("tabRoute");
+      const mapClampPan = (x, y) => ({ x: Math.max(-800, Math.min(800, x)), y: Math.max(-600, Math.min(600, y)) });
+      let mapDrag = null, pinchStart = null;
+      routeTab.addEventListener("pointerdown", (e) => {
+        if (!app.mapZoom || !e.isPrimary) return;
+        if (!e.target.closest || !e.target.closest("#mapSvg")) return;
+        mapDrag = { x: e.clientX, y: e.clientY, pan: { x: app.mapPan.x, y: app.mapPan.y }, dx: 0, dy: 0 };
+        const svg = document.getElementById("mapSvg");
+        if (svg) { try { svg.setPointerCapture(e.pointerId); } catch (err) {} }
+      });
+      routeTab.addEventListener("pointermove", (e) => {
+        if (!mapDrag) return;
+        const svg = document.getElementById("mapSvg");
+        if (!svg) return;
+        const rect = svg.getBoundingClientRect();
+        const k = 760 / (rect.width || 760);
+        mapDrag.dx = (e.clientX - mapDrag.x) * k;
+        mapDrag.dy = (e.clientY - mapDrag.y) * k;
+        const g = document.getElementById("mapG");
+        if (g) g.setAttribute("transform", "translate(" + mapDrag.dx.toFixed(1) + "," + mapDrag.dy.toFixed(1) + ")");
+      });
+      const endMapDrag = () => {
+        if (!mapDrag) return;
+        app.mapPan = mapClampPan(app.mapPan.x + mapDrag.dx, app.mapPan.y + mapDrag.dy);
+        mapDrag = null;
+        app.renderRouteTab();
+      };
+      routeTab.addEventListener("pointerup", endMapDrag);
+      routeTab.addEventListener("pointercancel", endMapDrag);
+      routeTab.addEventListener("wheel", (e) => {
+        if (!e.target.closest || !e.target.closest("#mapSvg")) return;
+        app.mapZoom = Math.max(-3, Math.min(2, app.mapZoom + (e.deltaY < 0 ? 1 : -1)));
+        app.renderRouteTab();
+      }, { passive: true });
+      routeTab.addEventListener("touchstart", (e) => {
+        if (e.touches.length === 2 && e.target.closest && e.target.closest("#mapSvg")) {
+          const a = e.touches[0], b = e.touches[1];
+          pinchStart = { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1, z: app.mapZoom };
+          mapDrag = null;
+          const g = document.getElementById("mapG");
+          if (g) g.setAttribute("transform", "");
+        }
+      }, { passive: true });
+      routeTab.addEventListener("touchmove", (e) => {
+        if (pinchStart && e.touches.length === 2) {
+          const a = e.touches[0], b = e.touches[1];
+          const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+          const target = Math.max(-3, Math.min(2, Math.round(pinchStart.z + Math.log2(d / pinchStart.d))));
+          if (target !== app.mapZoom) { app.mapZoom = target; app.renderRouteTab(); }
+          if (e.cancelable) e.preventDefault();
+        }
+      }, { passive: false });
+      routeTab.addEventListener("touchend", () => { pinchStart = null; }, { passive: true });
+
+      const dz = document.getElementById("dropZone");
+      dz.addEventListener("dragover", (e) => e.preventDefault());
+      dz.addEventListener("drop", (e) => {
+        e.preventDefault();
+        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (!f) return;
+        f.text().then((text) => {
+          try {
+            const { pts, name } = parseGPX(text);
+            app.load(pts, name || f.name.replace(/\.gpx$/i, ""));
+          } catch (err) { app.showError(err.message || "Het bestand kon niet worden gelezen."); }
+        });
+      });
+
+      app.render();
+    </script>
+    <script>
+      if ("serviceWorker" in navigator && (location.protocol === "https:" || ["localhost", "127.0.0.1"].includes(location.hostname))) {
+        navigator.serviceWorker.register("./sw.js").catch(function () {});
+      }
+    </script>
+  </body>
+</html>
