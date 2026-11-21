@@ -67,7 +67,7 @@
       .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
       .muted { color: #64748b; font-size: 12px; }
       .chartSVG { width: 100%; height: auto; display: block; touch-action: pan-y; }
-      .legendbar { height: 6px; flex: 1; border-radius: 999px; background: linear-gradient(90deg, hsl(205,80%,50%), hsl(105,80%,50%), hsl(10,80%,50%)); }
+      .legendbar { height: 6px; flex: 1; border-radius: 999px; background: linear-gradient(90deg, hsl(228,85%,48%), hsl(296,85%,48%), hsl(360,85%,48%)); }
       .flex { display: flex; align-items: center; gap: 8px; }
       textarea { width: 100%; height: 110px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; font-family: monospace; font-size: 11px; }
     </style>
@@ -327,10 +327,34 @@
       }
       function fmtClock(ts) { try { return new Date(ts).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" }); } catch (e) { return "-"; } }
       function fmtStart(ts) { try { return new Date(ts).toLocaleString("nl-NL", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); } catch (e) { return "-"; } }
-      function speedColor(kmh, maxKmh) {
-        if (kmh == null || !maxKmh || maxKmh <= 0) return "#0284c7";
-        const t = Math.min(1, Math.max(0, kmh / maxKmh));
-        return "hsl(" + Math.round(205 - 195 * t) + ", 80%, 50%)";
+      function speedScaleMax(maxKmh) {
+        if (maxKmh == null || maxKmh <= 0) return 15;
+        if (maxKmh <= 15) return 15;
+        if (maxKmh <= 30) return 30;
+        return Math.ceil(maxKmh / 15) * 15;
+      }
+      function speedColor(kmh, scaleMax) {
+        if (kmh == null || !scaleMax || scaleMax <= 0) return "#1d4ed8";
+        const t = Math.min(1, Math.max(0, (kmh - 2) / (scaleMax - 2)));
+        return "hsl(" + Math.round(228 + 132 * t) + ", 85%, 48%)";
+      }
+      function legendTicks(scaleMax) {
+        if (scaleMax <= 15) return [2, 5, 10, 15];
+        if (scaleMax <= 30) return [2, 10, 20, 30];
+        return [2, Math.round(scaleMax / 3 / 5) * 5, Math.round((2 * scaleMax) / 3 / 5) * 5, scaleMax];
+      }
+      function legendHTML(maxKmh) {
+        const smax = speedScaleMax(maxKmh);
+        const ticks = legendTicks(smax);
+        let bar = "", lbls = "";
+        for (let i = 0; i < ticks.length; i++) {
+          const v = ticks[i];
+          const p = (100 * (v - 2) / (smax - 2)).toFixed(1);
+          bar += '<div style="position:absolute;left:' + p + '%;top:-2px;bottom:-2px;width:2px;background:#334155"></div>';
+          lbls += '<span style="position:absolute;left:' + p + '%;' + (i === 0 ? "" : i === ticks.length - 1 ? "transform:translateX(-100%);" : "transform:translateX(-50%);") + '">' + (i === ticks.length - 1 ? v + " km/u" : v) + "</span>";
+        }
+        return '<div style="margin-top:8px"><div class="legendbar" style="position:relative;background:linear-gradient(90deg,hsl(228,85%,48%),hsl(296,85%,48%),hsl(360,85%,48%))">' + bar + "</div>" +
+          '<div style="position:relative;height:16px;margin-top:3px;font-size:11px;color:#64748b">' + lbls + "</div></div>";
       }
 
       const app = {
@@ -405,9 +429,36 @@
         restoreOriginal() { if (this.origPts) this.load(this.origPts, this.name); },
 
         setTab(t) { this.tab = t; this.render(); },
-        setScrub(v) { this.scrub = Number(v); this.renderRouteTab(); },
-        setTrim0(v) { this.trim0 = Math.min(Number(v), Math.max(0, this.trim1 - 50)); this.renderRouteTab(); },
-        setTrim1(v) { this.trim1 = Math.max(Number(v), Math.min(this.track.totalM, this.trim0 + 50)); this.renderRouteTab(); },
+        setScrub(v) { this.scrub = Number(v); if (!this._scrubRaf) { this._scrubRaf = requestAnimationFrame(() => { this._scrubRaf = 0; this.updateScrub(); }); } },
+        setTrim0(v) { this.trim0 = Math.min(Number(v), Math.max(0, this.trim1 - 50)); this.updateTrimUI(); },
+        setTrim1(v) { this.trim1 = Math.max(Number(v), Math.min(this.track.totalM, this.trim0 + 50)); this.updateTrimUI(); },
+        updateTrimUI() {
+          const t = this.track; if (!t) return;
+          const l0 = document.getElementById("trim0Lbl"), l1 = document.getElementById("trim1Lbl"), b = document.getElementById("trimApply");
+          if (l0) l0.innerHTML = '<b>Start knippen:</b> 0 tot ' + (this.trim0 / 1000).toFixed(2) + ' km wordt verwijderd · over: ' + (this.trim0 / 1000).toFixed(2) + ' tot ' + (this.trim1 / 1000).toFixed(2) + ' km';
+          if (l1) l1.innerHTML = '<b>Einde knippen:</b> track loopt tot ' + (this.trim1 / 1000).toFixed(2) + ' km';
+          if (b) b.disabled = this.trim0 <= 0 && this.trim1 >= t.totalM;
+        },
+        scrubStatsHTML(i) {
+          const t = this.track, cur = t.mapPts[i];
+          return '<div class="stat"><div class="l">Punt</div><div class="v">' + (i + 1) + '</div><div class="s">van ' + t.mapPts.length + "</div></div>" +
+            '<div class="stat"><div class="l">Afstand</div><div class="v">' + cur.d + " km</div></div>" +
+            '<div class="stat"><div class="l">Tijd</div><div class="v">' + fmtDur(cur.t) + "</div><div class='s'>" + (cur.ts != null ? fmtClock(cur.ts) : "") + "</div></div>" +
+            '<div class="stat"><div class="l">Snelheid</div><div class="v">' + (cur.v != null ? cur.v + " km/h" : "-") + "</div><div class='s'>" + fmtPace(cur.v) + "</div></div>" +
+            '<div class="stat"><div class="l">Hoogte</div><div class="v">' + (cur.ele != null ? cur.ele + " m" : "-") + "</div></div>";
+        },
+        updateScrub() {
+          const t = this.track;
+          if (!t || !t.mapPts || !t.mapPts.length) return;
+          const i = Math.min(this.scrub, t.mapPts.length - 1);
+          if (this._mapPos && this._mapPos.length) {
+            const p = this._mapPos[Math.min(i, this._mapPos.length - 1)];
+            const dot = document.getElementById("scrubDot");
+            if (dot && p) { dot.setAttribute("cx", p.x.toFixed(1)); dot.setAttribute("cy", p.y.toFixed(1)); }
+          }
+          const st = document.getElementById("scrubStats");
+          if (st) st.innerHTML = this.scrubStatsHTML(i);
+        },
         tileError() { if (!this.tilesFailed) { this.tilesFailed = true; this.renderRouteTab(); } },
         mapZoomIn() { this.mapZoom = Math.min(2, this.mapZoom + 1); this.renderRouteTab(); },
         mapZoomOut() { this.mapZoom = Math.max(-3, this.mapZoom - 1); this.renderRouteTab(); },
@@ -577,6 +628,7 @@
           const t = this.track;
           const pts = t.mapPts;
           const maxKmh = t.maxV != null ? +(t.maxV * 3.6).toFixed(1) : null;
+          const scaleMax = speedScaleMax(maxKmh);
           const W = 760, H = 440, pad = 26;
           const lats = pts.map((p) => p.lat), lons = pts.map((p) => p.lon);
           const sorted = (arr, lo, hi) => {
@@ -608,6 +660,7 @@
             x: lonToWorldX(p.lon, z) * 256 + ox + panX,
             y: latToWorldY(p.lat, z) * 256 + oy + panY,
           }));
+          this._mapPos = pos;
           let out = "";
           if (!this.tilesFailed) {
             const n = Math.pow(2, z);
@@ -625,12 +678,12 @@
           for (let i = 1; i < pos.length; i++) {
             const a = pos[i - 1], g = pos[i];
             if (a.x < -4 || a.x > W + 4 || a.y < -4 || a.y > H + 4 || g.x < -4 || g.x > W + 4 || g.y < -4 || g.y > H + 4) continue;
-            out += '<line x1="' + a.x.toFixed(1) + '" y1="' + a.y.toFixed(1) + '" x2="' + g.x.toFixed(1) + '" y2="' + g.y.toFixed(1) + '" stroke="' + speedColor(pts[i].v, maxKmh) + '" stroke-width="3" stroke-linecap="round"/>';
+            out += '<line x1="' + a.x.toFixed(1) + '" y1="' + a.y.toFixed(1) + '" x2="' + g.x.toFixed(1) + '" y2="' + g.y.toFixed(1) + '" stroke="' + speedColor(pts[i].v, scaleMax) + '" stroke-width="3" stroke-linecap="round"/>';
           }
           const st = pos[0], en = pos[pos.length - 1], cur = pos[Math.min(this.scrub, pos.length - 1)];
-          out += '<circle cx="' + st.x.toFixed(1) + '" cy="' + st.y.toFixed(1) + '" r="5" fill="#16a34a" stroke="#fff" stroke-width="2"/>';
+          out += '<circle cx="' + st.x.toFixed(1) + '" cy="' + st.y.toFixed(1) + '" r="5" fill="#2563eb" stroke="#fff" stroke-width="2"/>';
           out += '<circle cx="' + en.x.toFixed(1) + '" cy="' + en.y.toFixed(1) + '" r="5" fill="#b91c1c" stroke="#fff" stroke-width="2"/>';
-          out += '<circle cx="' + cur.x.toFixed(1) + '" cy="' + cur.y.toFixed(1) + '" r="7" fill="#fff" stroke="#0f172a" stroke-width="2.5"/>';
+          out += '<circle id="scrubDot" cx="' + cur.x.toFixed(1) + '" cy="' + cur.y.toFixed(1) + '" r="7" fill="#fff" stroke="#0f172a" stroke-width="2.5"/>';
           out += '<text x="' + (W - 8) + '" y="' + (H - 8) + '" text-anchor="end" font-size="11" fill="#334155">© OpenStreetMap</text>';
           return '<svg id="mapSvg" class="chartSVG" style="touch-action:' + (this.mapZoom > 0 ? "none" : "pan-y") + '" viewBox="0 0 ' + W + " " + H + '"><g id="mapG">' + out + "</g></svg>";
         },
@@ -639,7 +692,6 @@
           const el = document.getElementById("tabRoute");
           const t = this.track;
           if (!t) return;
-          const cur = t.mapPts[Math.min(this.scrub, t.mapPts.length - 1)];
           const step = Math.max(5, Math.round(t.totalM / 400 / 5) * 5);
           el.innerHTML = '<div class="card"><h2>Route op de kaart (kleur = snelheid)</h2>' +
             '<div style="position:relative">' +
@@ -649,22 +701,17 @@
             '<button class="ghost" style="width:42px;height:42px;padding:0;font-size:20px" onclick="app.mapZoomOut()">&#8722;</button>' +
             '<button class="ghost" style="width:42px;height:42px;padding:0;font-size:11px" onclick="app.mapReset()">fit</button>' +
             "</div></div>" +
-            (t.maxV ? '<div class="flex" style="margin-top:8px"><span class="muted">langzaam</span><span class="legendbar"></span><span class="muted">snel</span></div>' : "") +
-            '<input type="range" min="0" max="' + (t.mapPts.length - 1) + '" value="' + Math.min(this.scrub, t.mapPts.length - 1) + '" oninput="app.setScrub(this.value)"/>' +
-            '<div class="stats" style="margin-top:10px">' +
-            '<div class="stat"><div class="l">Punt</div><div class="v">' + (this.scrub + 1) + '</div><div class="s">van ' + t.mapPts.length + "</div></div>" +
-            '<div class="stat"><div class="l">Afstand</div><div class="v">' + cur.d + ' km</div></div>' +
-            '<div class="stat"><div class="l">Tijd</div><div class="v">' + fmtDur(cur.t) + "</div><div class=\"s\">" + (cur.ts != null ? fmtClock(cur.ts) : "") + "</div></div>" +
-            '<div class="stat"><div class="l">Snelheid</div><div class="v">' + (cur.v != null ? cur.v + " km/h" : "-") + '</div><div class="s">' + fmtPace(cur.v) + "</div></div>" +
-            '<div class="stat"><div class="l">Hoogte</div><div class="v">' + (cur.ele != null ? cur.ele + " m" : "-") + "</div></div>" +
-            "</div></div>" +
+            (t.maxV ? legendHTML(+(t.maxV * 3.6).toFixed(1)) : "") +
+            '<input type="range" id="scrubRange" min="0" max="' + (t.mapPts.length - 1) + '" value="' + Math.min(this.scrub, t.mapPts.length - 1) + '" oninput="app.setScrub(this.value)"/>' +
+            '<div class="stats" id="scrubStats" style="margin-top:10px">' + this.scrubStatsHTML(Math.min(this.scrub, t.mapPts.length - 1)) + "</div>" +
+            "</div>" +
             '<div class="card"><h2>Begin en eind bijsnijden</h2>' +
-            '<div class="row"><span class="muted"><b>Start knippen:</b> 0 tot ' + (this.trim0 / 1000).toFixed(2) + ' km wordt verwijderd · over: ' + (this.trim0 / 1000).toFixed(2) + " tot " + (this.trim1 / 1000).toFixed(2) + ' km</span></div>' +
+            '<div class="row"><span class="muted" id="trim0Lbl"><b>Start knippen:</b> 0 tot ' + (this.trim0 / 1000).toFixed(2) + ' km wordt verwijderd · over: ' + (this.trim0 / 1000).toFixed(2) + " tot " + (this.trim1 / 1000).toFixed(2) + ' km</span></div>' +
             '<input type="range" style="margin-top:8px" min="0" max="' + Math.round(t.totalM) + '" step="' + step + '" value="' + this.trim0 + '" oninput="app.setTrim0(this.value)"/>' +
-            '<div class="row" style="margin-top:8px"><span class="muted"><b>Einde knippen:</b> track loopt tot ' + (this.trim1 / 1000).toFixed(2) + ' km</span></div>' +
+            '<div class="row" style="margin-top:8px"><span class="muted" id="trim1Lbl"><b>Einde knippen:</b> track loopt tot ' + (this.trim1 / 1000).toFixed(2) + ' km</span></div>' +
             '<input type="range" style="margin-top:8px" min="0" max="' + Math.round(t.totalM) + '" step="' + step + '" value="' + this.trim1 + '" oninput="app.setTrim1(this.value)"/>' +
             '<div class="row" style="margin-top:12px"><span class="muted">Alle statistieken worden na het knippen opnieuw berekend.</span>' +
-            '<button class="primary" ' + (this.trim0 <= 0 && this.trim1 >= t.totalM ? "disabled" : "") + ' onclick="app.applyTrim()">Bijsnijden toepassen</button></div>' +
+            '<button class="primary" id="trimApply" ' + (this.trim0 <= 0 && this.trim1 >= t.totalM ? "disabled" : "") + ' onclick="app.applyTrim()">Bijsnijden toepassen</button></div>' +
             (this.origPts && this.rawPts !== this.origPts ? '<div style="margin-top:10px"><button class="ghost" onclick="app.restoreOriginal()">Volledige track herstellen</button></div>' : "") +
             "</div>";
         },
