@@ -67,7 +67,7 @@
       .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
       .muted { color: #64748b; font-size: 12px; }
       .chartSVG { width: 100%; height: auto; display: block; touch-action: pan-y; }
-      .legendbar { height: 6px; flex: 1; border-radius: 999px; background: linear-gradient(90deg, hsl(228,85%,48%), hsl(296,85%,48%), hsl(360,85%,48%)); }
+      .legendbar { height: 6px; flex: 1; border-radius: 999px; background: #cbd5e1; }
       .flex { display: flex; align-items: center; gap: 8px; }
       textarea { width: 100%; height: 110px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; font-family: monospace; font-size: 11px; }
     </style>
@@ -84,7 +84,7 @@
           <div class="sub">Tik om een bestand te selecteren, of sleep het hierheen</div>
           <div style="margin-top:14px; display:inline-block" class="primary" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">Bestand selecteren</div>
         </div>
-        <input type="file" id="fileInput" style="display:none" onchange="app.readFile(this)" />
+        <input type="file" id="fileInput" accept=".gpx,application/gpx+xml,application/xml,text/xml,application/octet-stream" style="display:none" onchange="app.readFile(this)" />
         <div style="margin-top:12px">
           <button class="ghost" style="width:100%" onclick="app.loadDemo()">Voorbeeldtrack laden</button>
         </div>
@@ -333,18 +333,49 @@
         if (maxKmh <= 30) return 30;
         return Math.ceil(maxKmh / 15) * 15;
       }
+      function colorAtT(t) {
+        t = Math.min(1, Math.max(0, t));
+        return "hsl(" + Math.round(265 - 265 * t) + ", 85%, 48%)";
+      }
+      function bandGradient() {
+        let g = "linear-gradient(90deg";
+        const steps = 36;
+        for (let i = 0; i <= steps; i++) {
+          g += "," + colorAtT(i / steps) + " " + (100 * i / steps).toFixed(2) + "%";
+        }
+        return g + ")";
+      }
       function speedColor(kmh, scaleMax) {
-        if (kmh == null || !scaleMax || scaleMax <= 0) return "#1d4ed8";
-        const t = Math.min(1, Math.max(0, (kmh - 2) / (scaleMax - 2)));
-        return "hsl(" + Math.round(228 + 132 * t) + ", 85%, 48%)";
+        if (kmh == null || !scaleMax || scaleMax <= 0) return colorAtT(0);
+        return colorAtT((kmh - 2) / (scaleMax - 2));
       }
       function legendTicks(scaleMax) {
-        if (scaleMax <= 15) return [2, 5, 10, 15];
-        if (scaleMax <= 30) return [2, 10, 20, 30];
-        return [2, Math.round(scaleMax / 3 / 5) * 5, Math.round((2 * scaleMax) / 3 / 5) * 5, scaleMax];
+        if (scaleMax % 15 === 0) {
+          const stp = Math.max(5, Math.round(scaleMax / 3 / 5) * 5);
+          const ticks = [2];
+          for (let v = stp; v < scaleMax - stp / 2; v += stp) ticks.push(v);
+          ticks.push(scaleMax);
+          return ticks;
+        }
+        const ticks = [2];
+        for (let k = 1; k <= 3; k++) ticks.push(Math.round(2 + (scaleMax - 2) * (k / 4)));
+        ticks.push(scaleMax);
+        return ticks;
       }
-      function legendHTML(maxKmh) {
-        const smax = speedScaleMax(maxKmh);
+      function smoothSeries(arr, half) {
+        const out = new Array(arr.length).fill(null);
+        for (let i = 0; i < arr.length; i++) {
+          if (arr[i] == null) continue;
+          let sum = 0, n = 0;
+          for (let j = Math.max(0, i - half); j <= Math.min(arr.length - 1, i + half); j++) {
+            if (arr[j] != null) { sum += arr[j]; n++; }
+          }
+          out[i] = n ? sum / n : arr[i];
+        }
+        return out;
+      }
+      function legendHTML(scaleMax) {
+        const smax = Math.max(3, scaleMax || 15);
         const ticks = legendTicks(smax);
         let bar = "", lbls = "";
         for (let i = 0; i < ticks.length; i++) {
@@ -353,13 +384,13 @@
           bar += '<div style="position:absolute;left:' + p + '%;top:-2px;bottom:-2px;width:2px;background:#334155"></div>';
           lbls += '<span style="position:absolute;left:' + p + '%;' + (i === 0 ? "" : i === ticks.length - 1 ? "transform:translateX(-100%);" : "transform:translateX(-50%);") + '">' + (i === ticks.length - 1 ? v + " km/u" : v) + "</span>";
         }
-        return '<div style="margin-top:8px"><div class="legendbar" style="position:relative;background:linear-gradient(90deg,hsl(228,85%,48%),hsl(296,85%,48%),hsl(360,85%,48%))">' + bar + "</div>" +
+        return '<div style="margin-top:8px"><div class="legendbar" style="position:relative;background:' + bandGradient() + '">' + bar + "</div>" +
           '<div style="position:relative;height:16px;margin-top:3px;font-size:11px;color:#64748b">' + lbls + "</div></div>";
       }
 
       const app = {
         track: null, name: "", origPts: null, rawPts: null,
-        trim0: 0, trim1: 0, scrub: 0, tab: "overzicht", tilesFailed: false,
+        trim0: 0, trim1: 0, scrub: 0, tab: "overzicht", tilesFailed: false, scaleMax: null,
         mapZoom: 0, mapPan: { x: 0, y: 0 },
 
         showError(msg) { document.getElementById("errorBar").innerHTML = msg ? '<div class="err">' + msg + "</div>" : ""; },
@@ -401,6 +432,7 @@
             this.tilesFailed = false;
             this.mapZoom = 0;
             this.mapPan = { x: 0, y: 0 };
+            this.scaleMax = null;
             this.showError("");
             this.render();
           } catch (e) { this.showError(e.message || "De track kon niet worden verwerkt."); }
@@ -438,6 +470,34 @@
           if (l0) l0.innerHTML = '<b>Start knippen:</b> 0 tot ' + (this.trim0 / 1000).toFixed(2) + ' km wordt verwijderd · over: ' + (this.trim0 / 1000).toFixed(2) + ' tot ' + (this.trim1 / 1000).toFixed(2) + ' km';
           if (l1) l1.innerHTML = '<b>Einde knippen:</b> track loopt tot ' + (this.trim1 / 1000).toFixed(2) + ' km';
           if (b) b.disabled = this.trim0 <= 0 && this.trim1 >= t.totalM;
+        },
+        effScaleMax() {
+          if (this.scaleMax != null && this.scaleMax > 2) return this.scaleMax;
+          const mh = this.track && this.track.maxV != null ? +(this.track.maxV * 3.6).toFixed(1) : null;
+          return speedScaleMax(mh);
+        },
+        scaleLabel() {
+          return (this.scaleMax != null ? this.scaleMax + " km/u" : "auto: " + this.effScaleMax() + " km/u");
+        },
+        setScaleMax(v) {
+          this.scaleMax = Math.max(10, Math.min(90, Number(v) || 10));
+          if (!this._scaleRaf) {
+            this._scaleRaf = requestAnimationFrame(() => { this._scaleRaf = 0; this.updateScaleUI(); });
+          }
+        },
+        setScaleAuto() {
+          this.scaleMax = null;
+          this.updateScaleUI();
+        },
+        updateScaleUI() {
+          const mw = document.getElementById("mapWrap");
+          const lw = document.getElementById("legendWrap");
+          const sv = document.getElementById("scaleVal");
+          const sr = document.getElementById("scaleRange");
+          if (mw) mw.innerHTML = this.mapSVG();
+          if (lw) lw.innerHTML = legendHTML(this.effScaleMax());
+          if (sv) sv.textContent = this.scaleLabel();
+          if (sr && this.scaleMax == null) sr.value = Math.min(90, this.effScaleMax());
         },
         scrubStatsHTML(i) {
           const t = this.track, cur = t.mapPts[i];
@@ -514,7 +574,9 @@
         },
 
         chartSVG(rows, key, color, fill, unit, decimals) {
-          const vs = rows.map((r) => r[key]).filter((v) => v != null);
+          const rawVals = rows.map((r) => r[key]);
+          const smVals = smoothSeries(rawVals, 5);
+          const vs = smVals.filter((v) => v != null);
           if (!vs.length) return '<div class="muted">Geen gegevens voor deze grafiek.</div>';
           const W = 800, H = 300, L = 52, Rp = 14, T = 14, B = 30;
           const iw = W - L - Rp, ih = H - T - B;
@@ -548,9 +610,11 @@
             }
             seg = [];
           };
-          for (const r of rows) {
+          for (let ri = 0; ri < rows.length; ri++) {
+            const r = rows[ri];
             if (r[key] == null) { flush(); continue; }
-            seg.push(X(r.d).toFixed(1) + "," + Y(r[key]).toFixed(1));
+            const yv = smVals[ri] != null ? smVals[ri] : r[key];
+            seg.push(X(r.d).toFixed(1) + "," + Y(yv).toFixed(1));
           }
           flush();
           return '<svg class="chartSVG" viewBox="0 0 ' + W + " " + H + '" ontouchstart="" id="chart_' + key + '">' + out + "</svg>";
@@ -628,7 +692,7 @@
           const t = this.track;
           const pts = t.mapPts;
           const maxKmh = t.maxV != null ? +(t.maxV * 3.6).toFixed(1) : null;
-          const scaleMax = speedScaleMax(maxKmh);
+          const scaleMax = this.effScaleMax();
           const W = 760, H = 440, pad = 26;
           const lats = pts.map((p) => p.lat), lons = pts.map((p) => p.lon);
           const sorted = (arr, lo, hi) => {
@@ -695,13 +759,14 @@
           const step = Math.max(5, Math.round(t.totalM / 400 / 5) * 5);
           el.innerHTML = '<div class="card"><h2>Route op de kaart (kleur = snelheid)</h2>' +
             '<div style="position:relative">' +
-            this.mapSVG() +
+            '<div id="mapWrap">' + this.mapSVG() + "</div>" +
             '<div style="position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:6px">' +
             '<button class="ghost" style="width:42px;height:42px;padding:0;font-size:20px" onclick="app.mapZoomIn()">+</button>' +
             '<button class="ghost" style="width:42px;height:42px;padding:0;font-size:20px" onclick="app.mapZoomOut()">&#8722;</button>' +
             '<button class="ghost" style="width:42px;height:42px;padding:0;font-size:11px" onclick="app.mapReset()">fit</button>' +
             "</div></div>" +
-            (t.maxV ? legendHTML(+(t.maxV * 3.6).toFixed(1)) : "") +
+            '<div id="legendWrap">' + (t.maxV ? legendHTML(this.effScaleMax()) : "") + "</div>" +
+            (t.maxV ? '<div class="flex" style="margin-top:6px"><span class="muted" style="flex:0 0 auto">Kleurschaal tot</span><input type="range" id="scaleRange" style="flex:1;height:26px;margin:0 8px" min="10" max="90" step="5" value="' + Math.min(90, this.effScaleMax()) + '" oninput="app.setScaleMax(this.value)"/><span class="muted" id="scaleVal" style="flex:0 0 auto;min-width:96px;text-align:right">' + this.scaleLabel() + '</span><button class="ghost" style="flex:0 0 auto;padding:6px 10px;font-size:12px" onclick="app.setScaleAuto()">auto</button></div>' : "") +
             '<input type="range" id="scrubRange" min="0" max="' + (t.mapPts.length - 1) + '" value="' + Math.min(this.scrub, t.mapPts.length - 1) + '" oninput="app.setScrub(this.value)"/>' +
             '<div class="stats" id="scrubStats" style="margin-top:10px">' + this.scrubStatsHTML(Math.min(this.scrub, t.mapPts.length - 1)) + "</div>" +
             "</div>" +
